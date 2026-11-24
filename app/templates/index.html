@@ -112,7 +112,22 @@
     <div class="row">
       <label class="url">YouTube link<input name="url" placeholder="https://www.youtube.com/watch?v=…" required></label>
       <label>Reels<select name="num_clips"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
+      <label>Length<select name="length"><option value="story">Story (40-90s)</option><option value="standard">Standard (25-60s)</option><option value="short">Short (15-40s)</option></select></label>
       <label>Layout<select name="layout"><option value="track">Follow speaker (face tracking)</option><option value="blur">Blurred background</option><option value="crop">Center crop (fill)</option></select></label>
+    </div>
+    <div class="row">
+      <label class="toggle"><input type="checkbox" name="summary" checked> Also make 1 summary reel: the whole video in under a minute (needs the AI editor)</label>
+    </div>
+    <div class="row" style="align-items:center">
+      <label class="toggle"><input type="checkbox" name="explainer" checked> Also make 1 explainer reel: our character Reelo explains the video in a free AI voice</label>
+      <label>Voice<select name="voice">
+        <option value="en-IN-NeerjaNeural">English · Neerja (female, Indian)</option>
+        <option value="en-IN-PrabhatNeural">English · Prabhat (male, Indian)</option>
+        <option value="en-US-AvaNeural">English · Ava (female, US)</option>
+        <option value="en-US-AndrewNeural">English · Andrew (male, US)</option>
+        <option value="hi-IN-SwaraNeural">Hindi · Swara (female)</option>
+        <option value="hi-IN-MadhurNeural">Hindi · Madhur (male)</option>
+      </select></label>
     </div>
     <div class="row">
       <label class="toggle"><input type="checkbox" name="auto_schedule" id="auto"> Auto-schedule reels after they're made</label>
@@ -172,7 +187,7 @@ $('#form').onsubmit = async e => {
   btn.disabled = true; btn.textContent = 'Starting…';
   try {
     await api('/api/jobs', {method:'POST', body: JSON.stringify({
-      url: f.get('url'), num_clips: +f.get('num_clips'), layout: f.get('layout'),
+      url: f.get('url'), num_clips: +f.get('num_clips'), layout: f.get('layout'), length: f.get('length'), summary: !!f.get('summary'), explainer: !!f.get('explainer'), voice: f.get('voice'),
       auto_schedule: !!f.get('auto_schedule'), start_at: f.get('start_at') || null,
       interval_hours: +f.get('interval_hours')
     })});

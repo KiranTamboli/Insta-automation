@@ -5,11 +5,11 @@ import time
 import traceback
 from datetime import datetime, timedelta
 from . import db
-from .config import REELS_DIR, REEL_LAYOUT
+from .config import REELS_DIR, REEL_LAYOUT, DEFAULT_HASHTAGS as DEFAULT_TAGS
 from .downloader import download, fetch_captions, load_heatmap
-from .transcribe import extract_audio, transcribe, loudness_per_second
-from .viral import find_viral_moments
-from .editor import render_reel
+from .transcribe import extract_audio, transcribe, loudness_per_second, energy_fine
+from .viral import find_viral_moments, understand_video
+from .editor import render_reel, render_stitched
 
 _last_write = {}
 
@@ -29,7 +29,11 @@ def _status(job_id, status, message="", progress=None, force=True):
         print(f"[job {job_id}] {status} {message}")
 
 
-def run_job(job_id, url, num_clips, schedule_start=None, interval_hours=None, layout=None):
+LENGTHS = {"short": (15, 40), "standard": (25, 60), "story": (40, 90)}   # seconds (min, max)
+
+
+def run_job(job_id, url, num_clips, schedule_start=None, interval_hours=None, layout=None, length=None,
+            summary=True, explainer=True, voice=None):
     try:
         # 1) download: 0-30%
         _status(job_id, "downloading", "Connecting to YouTube…", 1)
@@ -58,16 +62,26 @@ def run_job(job_id, url, num_clips, schedule_start=None, interval_hours=None, la
         # 3) pick moments
         _status(job_id, "finding", "Finding the most viral moments…", render_from - 3)
         heatmap = load_heatmap(video.parent)
+        fine = energy_fine(wav)
+        say = lambda m: _status(job_id, "finding", m, render_from - 3)
+        profile, summary_plan = understand_video(segments, title, fine, say) if summary else ("", None)
+        from . import ai
+        do_explainer = bool(explainer and ai.provider())
+        extra = (1 if summary_plan else 0) + (1 if do_explainer else 0)
+        if extra:
+            db.x("UPDATE jobs SET num_clips=? WHERE id=?", (num_clips + extra, job_id))
         clips, method = find_viral_moments(segments, loud, title, num_clips, heatmap=heatmap,
+                                           fine=fine, limits=LENGTHS.get(length or "story"), profile=profile,
                                            status=lambda m: _status(job_id, "finding", m, render_from - 3))
         if not clips:
             raise RuntimeError("No speech found - couldn't pick clips")
 
         # 4) render: render_from-100%
-        share = (100 - render_from) / len(clips)
+        n_total = len(clips) + (1 if summary_plan else 0) + (1 if do_explainer else 0)
+        share = (100 - render_from) / n_total
         for i, c in enumerate(clips, 1):
             base = render_from + share * (i - 1)
-            label = f"Editing reel {i} of {len(clips)}"
+            label = f"Editing reel {i} of {n_total}"
             _status(job_id, "editing", f"{label}… finding the speaker" if (layout or REEL_LAYOUT) == "track"
                     else f"{label}…", base)
             out = REELS_DIR / str(job_id) / f"reel_{i}.mp4"
@@ -84,17 +98,67 @@ def run_job(job_id, url, num_clips, schedule_start=None, interval_hours=None, la
                  (job_id, str(out), c["start"], c["end"], c["title"], c["caption"], c["hashtags"],
                   c["score"], c["reason"], status, sched))
 
-        from . import ai
+        if summary_plan:                                   # the extra reel: the whole video in under a minute
+            try:
+                i = n_total
+                base = render_from + share * (i - 1)
+                label = "Editing the summary reel"
+                _status(job_id, "editing", f"{label}…", base)
+                out = REELS_DIR / str(job_id) / f"reel_{i}_summary.mp4"
+                parts = summary_plan["parts"]
+                render_stitched(video, out, parts, segments, summary_plan["title"], layout,
+                                progress=lambda p, b=base, l=label: _status(
+                                    job_id, "editing", f"{l}… {p:.0f}%", b + share * p / 100 * 0.98, force=False))
+                length_s = sum(p["end"] - p["start"] for p in parts) + 0.5
+                sched, status = None, "draft"
+                if schedule_start:
+                    sched = (schedule_start + timedelta(hours=(interval_hours or 24) * (i - 1))).isoformat(timespec="minutes")
+                    status = "scheduled"
+                db.x("""INSERT INTO clips(job_id,path,start,end,title,caption,hashtags,score,reason,status,scheduled_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                     (job_id, str(out), parts[0]["start"], parts[0]["start"] + length_s, summary_plan["title"],
+                      summary_plan["caption"], summary_plan["hashtags"], 100.0, summary_plan["reason"], status, sched))
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[job {job_id}] summary reel skipped: {e}")
+                n_total -= 1
+                db.x("UPDATE jobs SET num_clips=? WHERE id=?", (n_total, job_id))
+
+        if do_explainer:                                   # our character explains the whole video
+            i = n_total
+            base = render_from + share * (i - 1)
+            try:
+                from .explainer import make_explainer, CHARACTER_NAME
+                out = REELS_DIR / str(job_id) / f"reel_{i}_explainer.mp4"
+                info = make_explainer(video, out, segments, title, profile, voice, layout,
+                                      status=lambda m, b=base: _status(job_id, "editing", m, b),
+                                      progress=lambda p, b=base: _status(job_id, "editing", f"{CHARACTER_NAME}'s explainer reel… {p:.0f}%",
+                                                                         b + share * p / 100 * 0.98, force=False))
+                sched, status = None, "draft"
+                if schedule_start:
+                    sched = (schedule_start + timedelta(hours=(interval_hours or 24) * (i - 1))).isoformat(timespec="minutes")
+                    status = "scheduled"
+                db.x("""INSERT INTO clips(job_id,path,start,end,title,caption,hashtags,score,reason,status,scheduled_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                     (job_id, str(out), 0.0, info["length"], info["title"], info["caption"],
+                      info["hashtags"] or DEFAULT_TAGS, 100.0, info["reason"], status, sched))
+            except Exception as e:
+                traceback.print_exc()
+                print(f"[job {job_id}] explainer reel skipped: {e}")
+                n_total -= 1
+                db.x("UPDATE jobs SET num_clips=? WHERE id=?", (n_total, job_id))
+
         picked = {"claude": "Claude AI pick", "gemini": "Gemini AI pick"}.get(
             method, "basic pick - the AI did not answer this time" if ai.provider() else "basic pick")
-        _status(job_id, "done", f"{len(clips)} reels ready ({picked}{' + most-replayed data' if heatmap else ''})", 100)
+        _status(job_id, "done", f"{n_total} reels ready ({picked}{' + most-replayed data' if heatmap else ''})", 100)
     except Exception as e:
         traceback.print_exc()
         _status(job_id, "error", str(e)[:500])
 
 
-def start_job(url, num_clips=3, schedule_start: datetime | None = None, interval_hours=24, layout=None):
+def start_job(url, num_clips=3, schedule_start: datetime | None = None, interval_hours=24, layout=None, length=None,
+              summary=True, explainer=True, voice=None):
     job_id = db.x("INSERT INTO jobs(url,num_clips,progress) VALUES(?,?,0)", (url, num_clips))
-    threading.Thread(target=run_job, args=(job_id, url, num_clips, schedule_start, interval_hours, layout),
-                     daemon=True).start()
+    threading.Thread(target=run_job, args=(job_id, url, num_clips, schedule_start, interval_hours, layout, length,
+                                           summary, explainer, voice), daemon=True).start()
     return job_id

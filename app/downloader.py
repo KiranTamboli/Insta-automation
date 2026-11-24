@@ -89,37 +89,55 @@ def load_heatmap(out_dir: Path):
 
 
 # ------------------------------------------------------------------ captions
-LANG_PRIORITY = ["en", "en-US", "en-GB", "en-IN", "en-orig", "hi", "hi-orig"]
+def choose_caption(info):
+    """Pick captions in the language actually SPOKEN in the video.
+
+    YouTube offers auto-translated captions in many languages; their timings are loose and the words
+    don't match the audio, so cuts made from them land mid-speech. Order of preference:
+    human-made captions in the original language > auto captions in the original language > English."""
+    subs = {k: v for k, v in (info.get("subtitles") or {}).items() if k != "live_chat"}
+    auto = info.get("automatic_captions") or {}
+    orig = next((k[:-5] for k in auto if k.endswith("-orig")), None) or (info.get("language") or "").split("-")[0]
+    if orig:
+        k = next((k for k in subs if k.split("-")[0] == orig), None)
+        if k:
+            return k, False
+        for k in (f"{orig}-orig", orig):
+            if k in auto:
+                return k, True
+    k = next((k for k in subs if k.startswith("en")), None) or next(iter(subs), None)
+    if k:
+        return k, False
+    for k in ("en-orig", "en"):
+        if k in auto:
+            return k, True
+    return None, False
 
 
 def fetch_captions(url: str, out_dir: Path):
     """Grab YouTube's own captions (manual or auto) as word-timed segments. Returns [] if none."""
     for old in out_dir.glob("subs.*.json3"):
         old.unlink()
-    opts = {
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": ["en.*", "en", "hi.*", "hi"],
-        "subtitlesformat": "json3",
-        "outtmpl": str(out_dir / "subs.%(ext)s"),
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "ignoreerrors": True,
-    }
+    base = {"skip_download": True, "noplaylist": True, "quiet": True, "no_warnings": True, "ignoreerrors": True}
     try:
+        with yt_dlp.YoutubeDL(base) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        _save_heatmap(info, out_dir)
+        lang, is_auto = choose_caption(info)
+        if not lang:
+            return [], None
+        opts = {**base, "writesubtitles": not is_auto, "writeautomaticsub": is_auto, "subtitleslangs": [lang],
+                "subtitlesformat": "json3", "outtmpl": str(out_dir / "subs.%(ext)s")}
         with yt_dlp.YoutubeDL(opts) as ydl:
-            _save_heatmap(ydl.extract_info(url, download=True), out_dir)
+            ydl.extract_info(url, download=True)
     except Exception as e:
         print(f"[captions] could not fetch: {e}")
         return [], None
-    files = {p.name.split(".")[-2]: p for p in out_dir.glob("subs.*.json3")}
+    files = sorted(out_dir.glob("subs.*.json3"))
     if not files:
         return [], None
-    lang = next((l for l in LANG_PRIORITY if l in files), next(iter(files)))
-    segs = parse_json3(files[lang])
-    return segs, lang
+    segs = parse_json3(files[0])
+    return segs, f"{lang}{' auto' if is_auto else ''}"
 
 
 def parse_json3(path: Path):

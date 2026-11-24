@@ -29,6 +29,19 @@ def loudness_per_second(wav: Path) -> np.ndarray:
     return np.sqrt((data ** 2).mean(axis=1))
 
 
+def energy_fine(wav: Path, hop=0.02):
+    """Loudness in dB every 20 ms - used to place cuts inside real pauses."""
+    with wave.open(str(wav)) as w:
+        sr = w.getframerate()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+    n = int(sr * hop)
+    frames = len(data) // n
+    if frames == 0:
+        return np.zeros(1), hop
+    rms = np.sqrt((data[: frames * n].reshape(frames, n) ** 2).mean(axis=1))
+    return 20 * np.log10(rms + 1.0), hop
+
+
 def transcribe(wav: Path, progress=None):
     """Returns list of segments: {start, end, text, words:[{start,end,word}]}"""
     global _model

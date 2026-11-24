@@ -75,6 +75,10 @@ class JobIn(BaseModel):
     start_at: str | None = None        # "2026-11-04T18:30" local time
     interval_hours: float = 24
     layout: str | None = None
+    length: str | None = None          # short | standard | story
+    summary: bool = True               # also make one summary reel of the whole video (needs AI)
+    explainer: bool = True             # also make one reel where our character explains the video
+    voice: str | None = None           # narrator voice for the explainer
 
 
 @app.post("/api/jobs")
@@ -84,7 +88,7 @@ def create_job(j: JobIn):
     start = None
     if j.auto_schedule:
         start = datetime.fromisoformat(j.start_at) if j.start_at else scheduler.now_local()
-    job_id = start_job(j.url.strip(), max(1, min(j.num_clips, 10)), start, j.interval_hours, j.layout)
+    job_id = start_job(j.url.strip(), max(1, min(j.num_clips, 10)), start, j.interval_hours, j.layout, j.length, j.summary, j.explainer, j.voice)
     return {"id": job_id}
 
 

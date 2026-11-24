@@ -1,10 +1,5 @@
-# secrets - never upload
 .env
-
-# re-created by setup.bat
 .venv/
 __pycache__/
 bin/
-
-# videos, reels and database (huge / personal)
 data/

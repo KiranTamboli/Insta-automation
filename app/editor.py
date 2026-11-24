@@ -69,26 +69,35 @@ def build_ass(segments, start, end, hook_title, path: Path, words_per_chunk=3):
 
 
 def render_reel(source: Path, out: Path, start: float, end: float, segments, hook_title="", layout=None,
-                speech_end=None, progress=None):
+                speech_end=None, progress=None, tail=True, pre_track=None):
+    """tail=False renders a middle piece of a stitched reel (no freeze/fade at the end).
+    pre_track: a face track computed earlier (dict), or False to force no tracking."""
     layout = layout or REEL_LAYOUT
     out.parent.mkdir(parents=True, exist_ok=True)
     speech_end = min(speech_end or end, end)
     ass = build_ass(segments, start, speech_end, hook_title, out.with_suffix(".ass"))
     dur = end - start
-    HOLD = 0.5                                            # freeze the last frame in silence, then fade out
+    HOLD = 0.5 if tail else 0.0                           # freeze the last frame in silence, then fade out
     total = dur + HOLD
-    vfade = (f",tpad=stop_mode=clone:stop_duration={HOLD},"
-             f"fade=t=out:st={max(0.0, total - 0.45):.2f}:d=0.45")
-    afilter = (f"[0:a]afade=t=in:d=0.06,afade=t=out:st={max(0.0, dur - 0.1):.2f}:d=0.1,"
-               f"apad=pad_dur={HOLD}[a]")
+    if tail:
+        vfade = (f",tpad=stop_mode=clone:stop_duration={HOLD},"
+                 f"fade=t=out:st={max(0.0, total - 0.45):.2f}:d=0.45")
+        afilter = (f"[0:a]afade=t=in:d=0.06,afade=t=out:st={max(0.0, dur - 0.1):.2f}:d=0.1,"
+                   f"apad=pad_dur={HOLD}[a]")
+    else:
+        vfade = ""
+        afilter = f"[0:a]afade=t=in:d=0.05,afade=t=out:st={max(0.0, dur - 0.07):.2f}:d=0.07[a]"
 
     track = None
     if layout == "track":                                 # follow the speaker's face
         from . import tracker
-        try:
-            track, why = tracker.track_clip(source, start, end)
-        except Exception as e:
-            track, why = None, str(e)
+        if pre_track is not None:
+            track, why = (pre_track or None), "pieces of this reel need the same layout"
+        else:
+            try:
+                track, why = tracker.track_clip(source, start, end)
+            except Exception as e:
+                track, why = None, str(e)
         if track is None:
             print(f"[editor] face tracking skipped ({why}) - using blurred background")
             layout = "blur"
@@ -128,4 +137,49 @@ def render_reel(source: Path, out: Path, start: float, end: float, segments, hoo
     proc.wait()
     if proc.returncode != 0:
         raise RuntimeError("FFmpeg failed: " + proc.stderr.read()[-400:])
+    return layout
+
+
+def render_stitched(source: Path, out: Path, parts, segments, hook_title="", layout=None, progress=None):
+    """Summary reel: several moments from across the video joined with jump cuts.
+    parts = [{"start", "end", "speech_end"}, ...] in playing order."""
+    layout = layout or REEL_LAYOUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tracks = [None] * len(parts)
+    if layout == "track":                                 # all pieces must share one look
+        from . import tracker
+        try:
+            tracks = [tracker.track_clip(source, p["start"], p["end"])[0] for p in parts]
+        except Exception as e:
+            print(f"[editor] face tracking skipped ({e})")
+            tracks = [None] * len(parts)
+        if any(t is None for t in tracks):
+            layout, tracks = "blur", [None] * len(parts)
+    lens = [p["end"] - p["start"] for p in parts]
+    whole, done, names = sum(lens), 0.0, []
+    try:
+        for i, p in enumerate(parts):
+            piece = out.with_name(f"{out.stem}_p{i}.mp4")
+            names.append(piece)
+            render_reel(source, piece, p["start"], p["end"], segments, hook_title if i == 0 else "", layout,
+                        speech_end=p.get("speech_end"), tail=(i == len(parts) - 1),
+                        pre_track=(tracks[i] if layout == "track" else False),
+                        progress=(lambda pct, d=done, l=lens[i]: progress((d + l * pct / 100) / whole * 97)) if progress else None)
+            done += lens[i]
+        lst = out.with_name(f"{out.stem}_list.txt")
+        lst.write_text("".join(f"file '{n.name}'\n" for n in names), encoding="utf-8")
+        names.append(lst)
+        r = subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                            "-i", lst.name, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                            "-movflags", "+faststart", out.name],
+                           cwd=str(out.parent), capture_output=True, text=True, encoding="utf-8", errors="ignore")
+        if r.returncode != 0:
+            raise RuntimeError("FFmpeg join failed: " + r.stderr[-300:])
+    finally:
+        for n in names:                                   # remove the temporary pieces
+            for f in (n, n.with_suffix(".ass"), n.with_suffix(".cmd")):
+                if f != out and f.exists() and f.name.startswith(out.stem + "_"):
+                    f.unlink()
+    if progress:
+        progress(100)
     return layout

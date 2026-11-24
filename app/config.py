@@ -57,7 +57,7 @@ CLAUDE_MODEL = env("CLAUDE_MODEL", "claude-sonnet-5-5")
 WHISPER_MODEL = env("WHISPER_MODEL", "base")
 REEL_LAYOUT = env("REEL_LAYOUT", "track")
 MIN_CLIP = float(env("MIN_CLIP_SECONDS", "20"))
-MAX_CLIP = float(env("MAX_CLIP_SECONDS", "55"))
+MAX_CLIP = float(env("MAX_CLIP_SECONDS", "90"))
 DEFAULT_HASHTAGS = env("DEFAULT_HASHTAGS", "#reels #viral #trending #explore")
 
 TIMEZONE = env("TIMEZONE", "Asia/Kolkata")
