@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reel Studio</title>
+<style>
+  :root{--bg:#0e0f13;--card:#171920;--card2:#1d2029;--line:#262934;--text:#eceef3;--muted:#8b90a0;--accent:#ff3d7f;--accent2:#ffb03a;--ok:#2ecc8f;--warn:#ffb03a;--bad:#ff5a5a;--purple:#b57cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 28px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  h1{margin:0;font-size:20px;letter-spacing:-.01em}
+  h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .pills{display:flex;gap:8px;flex-wrap:wrap}
+  .pill{font-size:12px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .pill.ok{color:var(--ok);border-color:#1f5a44}.pill.bad{color:var(--bad);border-color:#5a2626}
+  main{max-width:1180px;margin:0 auto;padding:24px 20px 80px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .new{display:grid;gap:14px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+  label{display:grid;gap:6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  input,select,textarea{background:#0f1116;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px 12px;font:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .url{flex:1;min-width:260px}.url input{width:100%;font-size:16px}
+  button{background:linear-gradient(90deg,var(--accent),#ff6a4d);border:0;color:#fff;padding:11px 18px;border-radius:10px;cursor:pointer;font:inherit;font-weight:600}
+  button:disabled{opacity:.6;cursor:wait}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text);font-weight:500;padding:7px 12px}
+  button.danger{background:transparent;border:1px solid #5a2626;color:var(--bad);font-weight:500;padding:7px 12px}
+  .toggle{display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--text)}
+  .toggle input{width:18px;height:18px;accent-color:var(--accent)}
+  .sched{display:none}.sched.on{display:flex}
+  h2{font-size:13px;margin:32px 0 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+
+  /* ---------- live job panel ---------- */
+  .live{background:linear-gradient(180deg,#1b1622,#171920);border:1px solid #3a2a44;border-radius:16px;padding:22px;margin-top:20px;display:grid;gap:18px;position:relative;overflow:hidden}
+  .live::before{content:"";position:absolute;inset:-1px;border-radius:16px;padding:1px;background:linear-gradient(90deg,var(--accent),var(--accent2),var(--purple),var(--accent));background-size:300% 100%;animation:flow 6s linear infinite;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+  @keyframes flow{to{background-position:300% 0}}
+  .live-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+  .live-title{font-weight:650;font-size:16px;line-height:1.35}
+  .live-sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .big{font-size:34px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.02em;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent;white-space:nowrap}
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .step{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:#12141a;border:1px solid var(--line);color:var(--muted);font-size:13px;transition:.3s}
+  .step .ic{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;flex:none;border:2px solid #333744;font-size:12px}
+  .step.done{color:var(--text)}.step.done .ic{background:var(--ok);border-color:var(--ok);color:#06281b}
+  .step.now{color:var(--text);border-color:#5b3a6b;background:#201a28}
+  .step.now .ic{border-color:transparent;border-top-color:var(--accent);border-right-color:var(--accent2);animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .bar{height:12px;border-radius:99px;background:#0f1116;border:1px solid var(--line);overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2));position:relative;transition:width .6s ease;min-width:12px}
+  .bar i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:shine 1.4s linear infinite;background-size:50% 100%;background-repeat:no-repeat}
+  @keyframes shine{from{background-position:-50% 0}to{background-position:150% 0}}
+  .live-msg{display:flex;justify-content:space-between;gap:12px;font-size:14px;flex-wrap:wrap}
+  .live-msg .m{color:var(--text)}.live-msg .t{color:var(--muted);font-variant-numeric:tabular-nums}
+  .tip{font-size:13px;color:#c9b8d6;background:#1f1a27;border-radius:10px;padding:10px 14px;transition:opacity .4s}
+  .tip b{color:var(--accent2)}
+  .live.err{border-color:#5a2626}.live.err::before{display:none}
+  .errbox{color:var(--bad);font-size:14px;background:#2a1515;border-radius:10px;padding:10px 14px}
+
+  .jobs{display:grid;gap:8px}
+  .job{display:flex;justify-content:space-between;gap:12px;padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:14px}
+  .job .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{font-size:12px;padding:2px 9px;border-radius:99px;background:#22252f;color:var(--muted);white-space:nowrap}
+  .badge.done,.badge.posted{background:#123a2b;color:var(--ok)}
+  .badge.error,.badge.failed{background:#3a1616;color:var(--bad)}
+  .badge.scheduled{background:#3a2d12;color:var(--warn)}
+  .badge.posting{background:#2a1a33;color:#d48cff}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+  .clip{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+  .clip.fresh{animation:pop .6s ease}
+  @keyframes pop{0%{transform:scale(.96);box-shadow:0 0 0 0 rgba(255,61,127,.6)}60%{box-shadow:0 0 0 10px rgba(255,61,127,0)}100%{transform:none}}
+  .clip video{width:100%;aspect-ratio:9/16;background:#000;display:block;object-fit:cover}
+  .clip .body{padding:14px;display:grid;gap:10px}
+  .clip textarea{width:100%;resize:vertical;min-height:64px;font-size:13px}
+  .clip input{width:100%;font-size:13px}
+  .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);gap:8px}
+  .why{font-size:12.5px;color:#d9c9a8;background:#221d14;border-radius:8px;padding:7px 10px;line-height:1.4}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .err{font-size:12px;color:var(--bad)}
+  .empty{color:var(--muted);padding:30px;text-align:center;border:1px dashed var(--line);border-radius:14px;grid-column:1/-1}
+  a.dl{color:var(--muted);font-size:12px}
+
+  /* skeleton reel while rendering */
+  .ghost-reel{border:1px dashed #3a2a44;border-radius:14px;overflow:hidden;background:var(--card)}
+  .ghost-reel .ph{aspect-ratio:9/16;background:linear-gradient(110deg,#15171d 30%,#232633 50%,#15171d 70%);background-size:250% 100%;animation:sk 1.6s linear infinite;display:grid;place-items:center;color:var(--muted);font-size:13px;text-align:center;padding:20px}
+  .ghost-reel .ph .ring{width:44px;height:44px;border-radius:50%;border:3px solid #2c2f3b;border-top-color:var(--accent);animation:spin 1s linear infinite;margin:0 auto 12px}
+  .ghost-reel.wait .ph .ring{animation:none;border-top-color:#2c2f3b}
+  @keyframes sk{to{background-position:-150% 0}}
+
+  .aibox{margin-top:16px;border-radius:14px;padding:16px 18px;border:1px solid #5b3a6b;background:linear-gradient(90deg,#221a2b,#1b1a22);display:grid;gap:12px}
+  .aibox.on{border-color:#1f5a44;background:#14211c}
+  .aibox h3{margin:0;font-size:15px}
+  .aibox p{margin:0;color:var(--muted);font-size:13px}
+  .aibox a{color:var(--accent2)}
+  .aibox .row input{flex:1;min-width:220px}
+  .aibox .msg{font-size:13px}
+  .linkbtn{background:none;border:0;color:var(--muted);text-decoration:underline;padding:0;font-weight:400;font-size:13px}
+  .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,120px);background:#123a2b;color:#bff5dc;border:1px solid #1f5a44;padding:12px 18px;border-radius:12px;font-weight:600;transition:transform .4s cubic-bezier(.2,.9,.3,1.2);z-index:9;box-shadow:0 10px 30px rgba(0,0,0,.4);cursor:pointer}
+  .toast.on{transform:translate(-50%,0)}
+  @media (max-width:700px){header{padding:16px}main{padding:16px}.steps{grid-template-columns:repeat(2,1fr)}.big{font-size:26px}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>Reel Studio</span> · YouTube → Viral Reels → Instagram</h1>
+  <div class="pills" id="pills"></div>
+</header>
+<main>
+  <form class="card new" id="form">
+    <div class="row">
+      <label class="url">YouTube link<input name="url" placeholder="https://www.youtube.com/watch?v=…" required></label>
+      <label>Reels<select name="num_clips"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>8</option><option>10</option></select></label>
+      <label>Layout<select name="layout"><option value="track">Follow speaker (face tracking)</option><option value="blur">Blurred background</option><option value="crop">Center crop (fill)</option></select></label>
+    </div>
+    <div class="row">
+      <label class="toggle"><input type="checkbox" name="auto_schedule" id="auto"> Auto-schedule reels after they're made</label>
+    </div>
+    <div class="row sched" id="sched">
+      <label>First post at<input type="datetime-local" name="start_at"></label>
+      <label>Then every<select name="interval_hours"><option value="3">3 hours</option><option value="6">6 hours</option><option value="12">12 hours</option><option value="24" selected>1 day</option><option value="48">2 days</option></select></label>
+    </div>
+    <div class="row"><button type="submit" id="go">Make reels</button></div>
+  </form>
+
+  <div id="aibox"></div>
+  <div id="live"></div>
+
+  <h2>Reels</h2>
+  <div class="grid" id="pending"></div>
+  <div class="grid" id="clips" style="margin-top:16px"></div>
+
+  <h2>History</h2>
+  <div class="jobs" id="jobs"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (url, opts={}) => {
+  const r = await fetch(url, {headers:{'Content-Type':'application/json'}, ...opts});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || r.statusText);
+  return d;
+};
+const RUNNING = ['queued','downloading','transcribing','finding','editing'];
+const STEPS = [
+  {key:'downloading', label:'Download video'},
+  {key:'transcribing', label:'Read captions'},
+  {key:'finding', label:'AI picks moments'},
+  {key:'editing', label:'Edit reels'},
+];
+const TIPS = [
+  'The <b>first 3 seconds</b> decide if people keep watching, so every reel opens on a hook line.',
+  'Reels between <b>20 and 55 seconds</b> tend to get the best completion rates.',
+  'Captions matter: <b>85% of people</b> scroll Reels with the sound off.',
+  'Each reel starts and ends on a <b>complete sentence</b> so it feels finished.',
+  'Post at a <b>steady rhythm</b>, like once a day, rather than all at once.',
+  'Edit the caption and hashtags on each reel before you schedule it.',
+  'Add an <b>Anthropic API key</b> in .env and Claude picks moments and writes captions.',
+];
+const rateHist = {};
+let editingField = false, lastClipSig = '', knownClips = new Set(), firstLoad = true, prevRunning = new Set(), tipIdx = 0;
+
+$('#auto').onchange = e => $('#sched').classList.toggle('on', e.target.checked);
+
+$('#form').onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target), btn = $('#go');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    await api('/api/jobs', {method:'POST', body: JSON.stringify({
+      url: f.get('url'), num_clips: +f.get('num_clips'), layout: f.get('layout'),
+      auto_schedule: !!f.get('auto_schedule'), start_at: f.get('start_at') || null,
+      interval_hours: +f.get('interval_hours')
+    })});
+    e.target.url.value = '';
+    await refresh();
+    $('#live').scrollIntoView({behavior:'smooth', block:'start'});
+  } catch (err) { alert(err.message); }
+  btn.disabled = false; btn.textContent = 'Make reels';
+};
+
+async function loadStatus() {
+  const s = await api('/api/status');
+  const ig = s.instagram;
+  $('#pills').innerHTML =
+    (ig.username ? `<span class="pill ok">Instagram: @${esc(ig.username)}</span>`
+      : ig.configured ? `<span class="pill bad" title="${esc(ig.error)}">Instagram token error</span>`
+      : `<span class="pill">Instagram not connected</span>`) +
+    `<span class="pill ${s.ai?'ok':'bad'}">${s.ai ? 'AI editor: ' + (s.ai==='claude'?'Claude':'Gemini') : 'AI editor off'}</span>` +
+    `<span class="pill">${esc(s.timezone)}</span>`;
+  const sa = document.querySelector('[name=start_at]');
+  if (!sa.value) sa.value = s.now;
+  renderAI(s.ai);
+}
+
+function renderAI(prov, open=false) {
+  const box = $('#aibox');
+  if (prov && !open) {
+    box.innerHTML = `<div class="aibox on"><div class="row" style="justify-content:space-between;align-items:center">
+      <div><h3>✅ AI editor is on (${prov==='claude'?'Claude':'Google Gemini'})</h3>
+      <p>The AI reads every sentence, picks moments with a strong hook and a complete ending, then double-checks each cut.</p></div>
+      <button class="linkbtn" onclick="renderAI(null,true)">Change key</button></div></div>`;
+    return;
+  }
+  box.innerHTML = `<div class="aibox">
+    <h3>✨ Turn on the AI editor for much better reels</h3>
+    <p>Without AI, clips are chosen by simple rules. With AI, the model understands the conversation: it starts each reel on a hook and ends on a finished thought.<br>
+    <b>Free option:</b> get a Google Gemini key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> (sign in with Google, then "Create API key") and paste it here.</p>
+    <div class="row">
+      <label>Model<select id="aiprov"><option value="gemini">Google Gemini (free)</option><option value="claude">Claude (paid, best)</option></select></label>
+      <label style="flex:1">API key<input id="aikey" type="password" placeholder="Paste your key here" autocomplete="off"></label>
+      <button type="button" id="aisave">Turn on AI</button>
+    </div>
+    <div class="msg" id="aimsg"></div></div>`;
+  $('#aisave').onclick = async () => {
+    const btn = $('#aisave'), msg = $('#aimsg');
+    btn.disabled = true; btn.textContent = 'Checking key…'; msg.textContent = '';
+    try {
+      const r = await api('/api/ai-key', {method:'POST', body: JSON.stringify({provider: $('#aiprov').value, key: $('#aikey').value})});
+      msg.style.color = 'var(--ok)'; msg.textContent = `Connected - using ${r.model}`;
+      setTimeout(loadStatus, 1200);
+    } catch (e) { msg.style.color = 'var(--bad)'; msg.textContent = e.message; }
+    btn.disabled = false; btn.textContent = 'Turn on AI';
+  };
+}
+
+const utc = s => new Date(s.replace(' ', 'T') + 'Z');
+const mmss = ms => { const t = Math.max(0, Math.floor(ms/1000)); return `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`; };
+
+function liveCard(j, doneCount) {
+  const idx = Math.max(0, STEPS.findIndex(s => s.key === j.status));
+  const pct = Math.max(1, Math.min(100, j.progress || 0));
+  const elapsed = Date.now() - utc(j.created_at);
+  // estimate time left from the speed over the last ~20 seconds
+  const hist = (rateHist[j.id] = rateHist[j.id] || []);
+  hist.push([Date.now(), pct]); while (hist.length > 2 && Date.now() - hist[0][0] > 20000) hist.shift();
+  const [t0, p0] = hist[0], rate = (pct - p0) / ((Date.now() - t0) / 1000);
+  const eta = (Date.now() - t0 > 6000 && rate > 0.02) ? `about ${mmss((100 - pct) / rate * 1000)} left` : 'estimating time left…';
+  return `
+  <div class="live" data-job="${j.id}">
+    <div class="live-top">
+      <div><div class="live-title">${esc(j.title || 'Fetching video info…')}</div>
+      <div class="live-sub">Job #${j.id} · ${j.num_clips} reels · ${doneCount} ready</div></div>
+      <div class="big">${pct.toFixed(0)}%</div>
+    </div>
+    <div class="steps">${STEPS.map((s,i) => `<div class="step ${i<idx?'done':i===idx?'now':''}"><span class="ic">${i<idx?'✓':''}</span>${s.label}</div>`).join('')}</div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="live-msg"><span class="m">${esc(j.message || 'Starting…')}</span><span class="t">⏱ ${mmss(elapsed)} elapsed · ${eta}</span></div>
+    <div class="tip">💡 ${TIPS[tipIdx % TIPS.length]}</div>
+  </div>`;
+}
+
+function showToast(text) {
+  const t = $('#toast'); t.textContent = text; t.classList.add('on');
+  t.onclick = () => { $('#clips').scrollIntoView({behavior:'smooth'}); t.classList.remove('on'); };
+  setTimeout(() => t.classList.remove('on'), 6000);
+}
+
+async function refresh() {
+  const [jobs, clips] = await Promise.all([api('/api/jobs'), api('/api/clips')]);
+  const running = jobs.filter(j => RUNNING.includes(j.status));
+  const perJob = {}; clips.forEach(c => perJob[c.job_id] = (perJob[c.job_id] || 0) + 1);
+
+  // live panels
+  // a job that fails while you're watching shows one dismissable note; old failures are never shown
+  const failedRecent = jobs.filter(j => j.status === 'error' && prevRunning.has(j.id));
+  $('#live').innerHTML = running.map(j => liveCard(j, perJob[j.id] || 0)).join('') +
+    failedRecent.map(j => `<div class="live err"><div class="live-top"><div class="live-title">${esc(j.title || j.url)}</div>
+      <button class="linkbtn" onclick="dismiss(${j.id})">✕ Dismiss</button></div>
+      <div class="errbox">Couldn't finish: ${esc(j.message)}</div>
+      <div class="live-sub">Send me this message if it happens again.</div></div>`).join('');
+
+  // finished jobs -> toast
+  jobs.forEach(j => { if (prevRunning.has(j.id) && j.status === 'done') showToast(`🎉 ${j.message} - click to view`); });
+  const keepErr = new Set(failedRecent.map(j => j.id));
+  prevRunning = new Set([...running.map(j => j.id), ...keepErr]);
+
+  // skeleton reels for running jobs
+  $('#pending').innerHTML = running.map(j => {
+    const ready = perJob[j.id] || 0, out = [];
+    for (let i = ready + 1; i <= j.num_clips; i++) {
+      const active = j.status === 'editing' && i === ready + 1;
+      out.push(`<div class="ghost-reel ${active?'':'wait'}"><div class="ph"><div><div class="ring"></div>Reel ${i}<br>${active ? esc((j.message||'').replace(/^Editing reel \d+ of \d+…\s*/,'')) || 'editing…' : 'waiting…'}</div></div></div>`);
+    }
+    return out.join('');
+  }).join('');
+  $('#pending').style.display = running.length ? '' : 'none';
+
+  // history
+  $('#jobs').innerHTML = jobs.filter(j => j.status === 'done').map(j => `
+    <div class="job"><div class="t"><b>#${j.id}</b> ${esc(j.title || j.url)}<br><span style="color:var(--muted);font-size:13px">${esc(j.message||'')}</span></div>
+    <div><span class="badge ${j.status}">${j.status}</span></div></div>`).join('') || '<div class="empty">No jobs yet.</div>';
+
+  // reels grid: only re-render when something changed (so playing videos don't restart)
+  const sig = clips.map(c => [c.id, c.status, c.scheduled_at, c.error, c.ig_media_id].join('|')).join(';');
+  if (sig !== lastClipSig && !editingField) {
+    lastClipSig = sig;
+    $('#clips').innerHTML = clips.length ? clips.map(c => {
+      const fresh = !firstLoad && !knownClips.has(c.id);
+      return `
+      <div class="clip ${fresh?'fresh':''}" data-id="${c.id}">
+        <video src="/media/${c.id}" controls preload="metadata"></video>
+        <div class="body">
+          <div class="meta"><span>Job #${c.job_id} · ${(c.end-c.start).toFixed(0)}s</span><span class="badge ${c.status}">${c.status}</span></div>
+          ${c.reason ? `<div class="why">${esc(c.reason)}</div>` : ''}
+          <textarea data-f="caption" placeholder="Caption">${esc(c.caption)}</textarea>
+          <input data-f="hashtags" value="${esc(c.hashtags)}" placeholder="#hashtags">
+          <label>Post at<input type="datetime-local" data-f="scheduled_at" value="${esc(c.scheduled_at||'')}"></label>
+          ${c.error ? `<div class="err">${esc(c.error)}</div>` : ''}
+          ${c.ig_media_id ? `<div class="meta">Posted · media ${esc(c.ig_media_id)}</div>` : ''}
+          <div class="actions">
+            ${c.status === 'posted' ? '' : `
+            <button class="ghost" onclick="save(${c.id},'scheduled')">${c.status==='scheduled'?'Update schedule':'Schedule'}</button>
+            ${c.status==='scheduled'?`<button class="ghost" onclick="save(${c.id},'draft')">Unschedule</button>`:''}
+            <button class="ghost" onclick="postNow(${c.id})">Post now</button>`}
+            <button class="danger" onclick="del(${c.id})">Delete</button>
+          </div>
+          <a class="dl" href="/media/${c.id}" download="reel_${c.id}.mp4">⬇ Download</a>
+        </div>
+      </div>`; }).join('') : (running.length ? '' : '<div class="empty">Paste a YouTube link above to make your first reels.</div>');
+    clips.forEach(c => knownClips.add(c.id));
+  }
+  firstLoad = false;
+  return running.length;
+}
+
+document.addEventListener('focusin', e => { if (e.target.closest('.clip') && e.target.dataset.f) editingField = true; });
+document.addEventListener('focusout', e => { if (e.target.closest('.clip')) setTimeout(() => editingField = !!document.activeElement?.dataset?.f, 50); });
+
+async function dismiss(id) {
+  prevRunning.delete(id);
+  await api(`/api/jobs/${id}`, {method:'DELETE'}).catch(() => {});
+  refresh();
+}
+
+async function save(id, status) {
+  const el = document.querySelector(`.clip[data-id="${id}"]`);
+  const body = {status};
+  el.querySelectorAll('[data-f]').forEach(i => body[i.dataset.f] = i.value);
+  try { await api(`/api/clips/${id}`, {method:'PATCH', body: JSON.stringify(body)}); editingField = false; lastClipSig=''; refresh(); }
+  catch (err) { alert(err.message); }
+}
+async function postNow(id) {
+  await save(id, 'draft');
+  try { await api(`/api/clips/${id}/post-now`, {method:'POST'}); lastClipSig=''; refresh(); } catch (err) { alert(err.message); }
+}
+async function del(id) {
+  if (!confirm('Delete this reel?')) return;
+  await api(`/api/clips/${id}`, {method:'DELETE'}); lastClipSig=''; refresh();
+}
+
+// poll fast while something is running, slowly otherwise
+async function loop() {
+  let busy = 0;
+  try { busy = await refresh(); } catch (e) {}
+  setTimeout(loop, busy ? 1000 : 4000);
+}
+setInterval(() => { tipIdx++; }, 7000);
+loadStatus(); loop();
+</script>
+</body>
+</html>

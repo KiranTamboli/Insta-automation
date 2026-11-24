@@ -1,0 +1,26 @@
+# Web UI + server
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+
+# Bundled FFmpeg (no separate install needed)
+imageio-ffmpeg>=0.5.1
+
+# Face tracking (finds the speaker so the reel can follow them)
+opencv-python-headless>=4.9
+
+# YouTube download
+yt-dlp>=2025.1.1
+
+# Speech-to-text with word timestamps (runs locally, CPU ok)
+faster-whisper>=1.0.3
+
+# AI viral-moment picker + caption/hashtag writer (optional, falls back to heuristics)
+anthropic>=0.40
+
+# Scheduling + Instagram API calls
+apscheduler>=3.10,<4
+requests>=2.31
+python-dotenv>=1.0
+numpy>=1.26
