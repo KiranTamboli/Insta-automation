@@ -55,6 +55,13 @@ def init():
             c.execute("ALTER TABLE jobs ADD COLUMN progress REAL DEFAULT 0")
         if "step" not in cols:
             c.execute("ALTER TABLE jobs ADD COLUMN step TEXT")
+        if "side" not in cols:                       # status of the explainer reel running in parallel
+            c.execute("ALTER TABLE jobs ADD COLUMN side TEXT")
+        # reels whose video file was deleted from disk: remove them from the list
+        from pathlib import Path
+        gone = [r[0] for r in c.execute("SELECT id, path FROM clips").fetchall() if not r[1] or not Path(r[1]).exists()]
+        for cid in gone:
+            c.execute("DELETE FROM clips WHERE id=?", (cid,))
         # tidy up on every start: drop failed jobs, and jobs left half-finished when the app was closed
         c.execute("DELETE FROM jobs WHERE status IN ('error','queued','downloading','transcribing','finding','editing')"
                   " AND id NOT IN (SELECT DISTINCT job_id FROM clips WHERE job_id IS NOT NULL)")

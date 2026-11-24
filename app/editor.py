@@ -137,6 +137,8 @@ def render_reel(source: Path, out: Path, start: float, end: float, segments, hoo
     proc.wait()
     if proc.returncode != 0:
         raise RuntimeError("FFmpeg failed: " + proc.stderr.read()[-400:])
+    for tmp in (out.with_suffix(".ass"), out.with_suffix(".cmd")):     # helper files no longer needed
+        tmp.unlink(missing_ok=True)
     return layout
 
 

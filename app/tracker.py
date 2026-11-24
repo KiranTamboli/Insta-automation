@@ -10,6 +10,7 @@ How it works
 Returns None when tracking is not a good idea (no faces, or a wide shot with two people far
 apart) - the caller then falls back to the blurred-background layout so nobody is cut off.
 """
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -18,6 +19,9 @@ from .config import ROOT, FFMPEG
 
 MODEL = ROOT / "models" / "yunet.onnx"
 SAMPLE_FPS = 5
+
+
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")      # hide harmless "GPU target not supported" notes
 
 
 def available():

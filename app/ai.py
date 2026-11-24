@@ -83,7 +83,7 @@ def _gemini_models(key):
 
 def _gemini_call(key, model, prompt, read_timeout):
     """One streamed request. Streaming keeps the connection alive while the model writes a long answer."""
-    base = {"temperature": 0.3, "responseMimeType": "application/json"}
+    base = {"temperature": 0.3, "responseMimeType": "application/json", "maxOutputTokens": 8192}
     # newer Gemini models 'think' before answering; keep that short so a long transcript doesn't time out
     options = [_think_cfg[model]] if model in _think_cfg else [
         {"thinkingConfig": {"thinkingLevel": "low"}}, {"thinkingConfig": {"thinkingBudget": 1024}}, {}]
@@ -102,18 +102,22 @@ def _gemini_call(key, model, prompt, read_timeout):
             err.status = r.status_code
             raise err
         _think_cfg[model] = extra
-        out = []
-        for line in r.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data:"):
+        out, finish, raw = [], None, b""
+        for line in r.iter_lines():                   # raw bytes: decode whole lines (no split characters)
+            if not line.startswith(b"data:"):
                 continue
             try:
-                chunk = json.loads(line[5:].strip())
-                for part in chunk["candidates"][0]["content"]["parts"]:
-                    if not part.get("thought"):
-                        out.append(part.get("text", ""))
-            except (ValueError, KeyError, IndexError):
-                continue
+                chunk = json.loads(line[5:].decode("utf-8").strip())
+            except ValueError:
+                raise RuntimeError("Gemini's reply arrived damaged")
+            cand = (chunk.get("candidates") or [{}])[0]
+            finish = cand.get("finishReason") or finish
+            for part in (cand.get("content") or {}).get("parts", []):
+                if not part.get("thought"):
+                    out.append(part.get("text", ""))
         text = "".join(out)
+        if finish and finish not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+            raise RuntimeError(f"Gemini stopped early ({finish})")
         if not text.strip():
             raise RuntimeError("Gemini returned an empty answer")
         return text
@@ -138,6 +142,8 @@ def _ask_gemini(prompt):
                 time.sleep(5)
             except RuntimeError as e:
                 errors.append(f"{model}: {str(e)[:160]}")
+                if ("stopped early" in str(e) or "damaged" in str(e)) and attempt < 1:
+                    continue                                # a one-off glitch: same model once more
                 if getattr(e, "status", 0) in (429, 500, 503) and attempt < 2:
                     time.sleep(15 * (attempt + 1))          # busy / rate limited: wait and retry
                     continue
@@ -154,14 +160,86 @@ def _ask_claude(prompt):
     return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
 
 
-def ask_json(prompt):
-    """Send a prompt, return parsed JSON (list or dict)."""
+def _repair_json(text):
+    """Close a reply that was cut off: finish the open string, drop a dangling item, close brackets."""
+    stack, in_str, esc, last_safe = [], False, False, 0
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            stack.append(ch)
+        elif ch in "]}":
+            if stack:
+                stack.pop()
+            last_safe = i + 1
+        elif ch == ",":
+            last_safe = i
+    # keep everything up to the last complete item, then close what is still open
+    cut = text[:last_safe].rstrip().rstrip(",")
+    stack, in_str, esc = [], False, False
+    for ch in cut:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            stack.append(ch)
+        elif ch in "]}" and stack:
+            stack.pop()
+    return cut + "".join("]" if c == "[" else "}" for c in reversed(stack))
+
+
+def parse_json(text):
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text)
+    start = min([i for i in (text.find("{"), text.find("[")) if i >= 0], default=0)
+    text = text[start:]
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    m = re.search(r"(\[.*\]|\{.*\})", text, re.S)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except ValueError:
+            pass
+    return json.loads(_repair_json(text))         # raises if even the repair can't be read
+
+
+def ask_json(prompt, tries=3):
+    """Send a prompt, return parsed JSON (list or dict). A broken or cut-off reply is asked again."""
     p = provider()
     if not p:
         raise RuntimeError("No AI key configured")
-    text = _ask_claude(prompt) if p == "claude" else _ask_gemini(prompt)
-    m = re.search(r"(\[.*\]|\{.*\})", text, re.S)
-    return json.loads(m.group(1) if m else text)
+    last = None
+    for attempt in range(tries):
+        try:
+            text = _ask_claude(prompt) if p == "claude" else _ask_gemini(prompt)
+            return parse_json(text)
+        except ValueError as e:
+            last = f"the reply was not valid JSON ({str(e)[:80]})"
+        except RuntimeError as e:
+            last = str(e)
+            if "No AI key" in last:
+                raise
+        print(f"[ai] attempt {attempt + 1} failed: {last[:160]} - asking again")
+    raise RuntimeError(f"AI failed {tries} times: {last}")
 
 
 def test():

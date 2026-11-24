@@ -3,7 +3,8 @@
   1. AI (Gemini, free) reads the video and writes a short voice-over script, split into 'beats';
      for each beat it also names the moment in the video that should play behind it.
   2. A free AI voice reads each beat (edge-tts), giving exact word timings for captions.
-  3. The matching moments are cut from the video (face-tracked, muted) as the background.
+  3. Still pictures from the matching moments (preferring ones without a talking face, so nobody's
+     lips move out of sync with the voice) are shown as framed cards with a slow zoom.
   4. Our animated character talks in the corner; captions follow the voice word by word.
 Nothing to write, record or pay for.
 """
@@ -79,42 +80,150 @@ def write_script(sents, title, profile, voice, status=None):
     return res, beats
 
 
-def _render_broll(source: Path, out: Path, start: float, dur: float, layout: str):
-    """A muted 9:16 background piece of exactly `dur` seconds."""
-    track = None
-    if layout == "track":
-        from . import tracker
-        try:
-            track, _ = tracker.track_clip(source, start, start + dur)
-        except Exception:
-            track = None
-    if track:
-        from . import tracker
-        cmd_file = out.with_suffix(".cmd")
-        x0 = tracker.write_sendcmd(track, track["fps"], dur, cmd_file)
-        vf = (f"sendcmd=f={cmd_file.name},crop=w={track['crop_w']}:h={track['crop_h']}:x={x0}:y=0,"
-              f"scale={W}:{H}:flags=lanczos,unsharp=5:5:0.6,setsar=1,fps=30")
-    elif layout == "crop":
-        vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
-    else:
-        vf = (f"split=2[bg][fg];[bg]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-              f"boxblur=25:5,eq=brightness=-0.15[bgb];[fg]scale={W}:-2[fgs];"
-              f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30")
-    r = subprocess.run([FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(source.resolve()),
-                        "-t", f"{dur:.3f}", "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                        "-pix_fmt", "yuv420p", out.name],
-                       cwd=str(out.parent), capture_output=True, text=True, encoding="utf-8", errors="ignore")
-    if r.returncode != 0:
-        raise RuntimeError("background clip failed: " + r.stderr[-300:])
-    out.with_suffix(".cmd").unlink(missing_ok=True)
+# ---------------------------------------------------------------- picture background (no lip-sync problems)
+CARD_Y = 360                     # top of the picture card
+FPS = 30
 
 
-def _captions(beats, title, path: Path, per=3):
+def _frames_around(source: Path, t0: float, t1: float, step=1.0, w=320):
+    """Small frames every `step` seconds between t0 and t1 -> list of (time, BGR array)."""
+    import numpy as np
+    from .tracker import probe
+    vw, vh, _ = probe(source)
+    h = int(round(vh * w / vw)) // 2 * 2
+    p = subprocess.run([FFMPEG, "-nostdin", "-loglevel", "error", "-ss", f"{t0:.2f}", "-t", f"{t1 - t0:.2f}",
+                        "-i", str(source), "-an", "-vf", f"fps={1 / step},scale={w}:{h}", "-f", "rawvideo",
+                        "-pix_fmt", "bgr24", "-"], capture_output=True)
+    n = w * h * 3
+    return [(t0 + (i + 0.5) * step, np.frombuffer(p.stdout[i * n:(i + 1) * n], np.uint8).reshape(h, w, 3))
+            for i in range(len(p.stdout) // n)]
+
+
+def _score_frames(frames):
+    """Higher = better background picture: sharp, not dark, and preferably WITHOUT a talking face."""
+    import cv2
+    from .tracker import MODEL
+    det = None
+    out = []
+    for t, img in frames:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        bright, sharp = float(gray.mean()), float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if bright < 28 or gray.std() < 12:                  # black / blank / fade frame
+            continue
+        face = 0.0
+        if MODEL.exists():
+            if det is None:
+                det = cv2.FaceDetectorYN.create(str(MODEL), "", (img.shape[1], img.shape[0]), 0.6, 0.3, 20)
+            _, faces = det.detect(img)
+            if faces is not None and len(faces):
+                face = float((faces[:, 2] * faces[:, 3]).max()) / (img.shape[0] * img.shape[1])
+        score = min(sharp, 1500) / 300 + (4.0 if face == 0 else -2.0 - 12 * face)
+        out.append((score, t, face))
+    return out
+
+
+def pick_pictures(source: Path, beats, sents, vlen):
+    """For each beat choose 1-2 still moments near what it talks about, avoiding the speaker's face."""
+    chosen = []
+    for b in beats:
+        center = sents[b["sid"]]["start"]
+        t0, t1 = max(0.0, center - 8), min(vlen - 0.5, center + 14)
+        cands = sorted(_score_frames(_frames_around(source, t0, t1)), reverse=True)
+        want = 1 if b["dur"] < 6.5 else 2
+        picks = []
+        for score, t, face in cands:
+            if all(abs(t - u) >= 3 for u in chosen + picks):
+                picks.append(t)
+            if len(picks) >= want:
+                break
+        if not picks:                                       # nothing usable: any frame at the moment itself
+            picks = [min(vlen - 0.5, center + 0.5)]
+        b["pics"] = sorted(picks)
+        chosen += picks
+
+
+def _card_size(vw, vh, max_w=960, max_h=820):
+    r = min(max_w / vw, max_h / vh)
+    return int(vw * r) // 2 * 2, int(vh * r) // 2 * 2
+
+
+def render_background(source: Path, beats, out: Path, status=None):
+    """All beats' pictures -> one silent 1080x1920 video. Each picture is a framed card with a slow
+    zoom/pan over a blurred copy of itself; 6-frame crossfade between pictures."""
+    from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+    from .tracker import probe
+    vw, vh, _ = probe(source)
+    cw, ch = _card_size(vw, vh)
+    cx = (W - cw) // 2
+    mask = Image.new("L", (cw, ch), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, cw - 1, ch - 1], radius=28, fill=255)
+    frame_png = out.with_name("shot.png")
+    proc = subprocess.Popen([FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                             "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "veryfast",
+                             "-crf", "20", "-pix_fmt", "yuv420p", str(out)], stdin=subprocess.PIPE)
+    prev, k = None, 0
+    try:
+        for b in beats:
+            shots = b["pics"]
+            seg = b["dur"] / len(shots)
+            for t in shots:
+                subprocess.run([FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-ss", f"{t:.2f}", "-i", str(source),
+                                "-frames:v", "1", str(frame_png)], check=True)
+                pic = Image.open(frame_png).convert("RGB")
+                # backdrop: the same picture, blurred and darkened, filling the screen
+                r = max(W / pic.width, H / pic.height)
+                bg = pic.resize((int(pic.width * r) + 1, int(pic.height * r) + 1), Image.BILINEAR)
+                bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width - W) // 2 + W, (bg.height - H) // 2 + H))
+                bg = ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(36))).enhance(0.55)
+                # white frame + soft shadow around the card
+                deco = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                ImageDraw.Draw(sh).rounded_rectangle([cx - 6, CARD_Y + 18, cx + cw + 6, CARD_Y + ch + 30], radius=36, fill=(0, 0, 0, 150))
+                deco.alpha_composite(sh.filter(ImageFilter.GaussianBlur(18)))
+                ImageDraw.Draw(deco).rounded_rectangle([cx - 8, CARD_Y - 8, cx + cw + 7, CARD_Y + ch + 7], radius=34,
+                                                       fill=(255, 255, 255, 235))
+                base = bg.convert("RGBA")
+                base.alpha_composite(deco)
+                base = base.convert("RGB")
+                src = pic.resize((int(cw * 1.25), int(ch * 1.25)), Image.LANCZOS)
+                n = max(1, int(round(seg * FPS)))
+                zoom_in = k % 2 == 0
+                pan = (1 if k % 4 < 2 else -1) * 0.04 * src.width
+                for f in range(n):
+                    u = f / max(1, n - 1)
+                    e = u * u * (3 - 2 * u)                  # ease in-out
+                    z = 1.0 + 0.10 * (e if zoom_in else 1 - e)
+                    w2, h2 = src.width / z, src.height / z
+                    mx = min(max(src.width / 2 + pan * (e - 0.5), w2 / 2), src.width - w2 / 2)   # never show an edge
+                    my = src.height / 2
+                    box = (mx - w2 / 2, my - h2 / 2, mx + w2 / 2, my + h2 / 2)
+                    card = src.transform((cw, ch), Image.EXTENT, box, Image.BICUBIC)
+                    img = base.copy()
+                    img.paste(card, (cx, CARD_Y), mask)
+                    if prev is not None and f < 6:          # crossfade from the previous picture
+                        img = Image.blend(prev, img, (f + 1) / 7)
+                    proc.stdin.write(img.tobytes())
+                    if f == n - 1:
+                        prev = img
+                k += 1
+        proc.stdin.close()
+        if proc.wait() != 0:
+            raise RuntimeError("background render failed")
+    finally:
+        frame_png.unlink(missing_ok=True)
+    return CARD_Y + ch
+
+
+def _captions(beats, title, path: Path, per=3, credit="", credit_y=0):
     head = ASS_HEADER.replace(",520,1\n", ",600,1\n", 1)       # captions a bit higher: the character sits below
     head = head.replace("Style: Hook,", "Style: Label,Arial Black,52,&H00FFFFFF,&H0000FFFF,&H00000000,&HC83D1FFF,1,0,0,0,100,100,0,0,3,14,0,8,60,60,190,1\nStyle: Hook,")
     if any("ऀ" <= ch <= "ॿ" for b in beats for w in b["words"] for ch in w["word"]):
         head = head.replace("Arial Black", "Nirmala UI")
+    head = head.replace("Style: Hook,", "Style: Src,Arial,30,&H00E6E6E6,&H00E6E6E6,&H00000000,&H80000000,0,1,0,0,100,100,0,0,1,2,1,8,80,80,0,1\nStyle: Hook,")
     lines = [head]
+    if credit and credit_y:
+        total = beats[-1]["t1"] + 0.6
+        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(total)},Src,,0,0,0,,{{\\an8\\pos(540,{credit_y + 22})}}{_esc(credit[:70])}\n")
     if title:
         lines.append(f"Dialogue: 1,{_ts(0)},{_ts(min(3.2, beats[0]['t1']))},Hook,,0,0,0,,{_esc(title.upper())}\n")
     for k, b in enumerate(beats):
@@ -167,22 +276,20 @@ def make_explainer(source: Path, out: Path, segments, title, profile="", voice=N
     character.render_character(work / "voice.wav", work / "char.mov", total)
     prog(50)
 
-    say("Cutting the matching moments from the video…")
-    vlen = max(s["end"] for s in sents)
-    for k, b in enumerate(beats):
-        st = max(0.0, min(sents[b["sid"]]["start"] - 0.2, vlen - b["dur"] - 0.5))
-        _render_broll(source, work / f"b{k}.mp4", st, b["dur"], layout)
-        prog(50 + 35 * (k + 1) / len(beats))
-    (work / "bg.txt").write_text("".join(f"file 'b{k}.mp4'\n" for k in range(len(beats))), encoding="utf-8")
-    subprocess.run([FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "bg.txt",
-                    "-c", "copy", "bg.mp4"], cwd=str(work), check=True)
+    say("Choosing pictures from the video…")
+    vlen = max(x["end"] for x in sents)
+    pick_pictures(source, beats, sents, vlen)
+    prog(62)
+    say("Building the picture background…")
+    card_bottom = render_background(source, beats, work / "bg.mp4")
+    prog(88)
 
     say("Putting the explainer reel together…")
-    _captions(beats, res.get("hook_title") or title, work / "cap.ass")
+    _captions(beats, res.get("hook_title") or title, work / "cap.ass", credit=f"From: {title}", credit_y=card_bottom)
     HOLD = 0.6
     end = total + HOLD
     vf = (f"[0:v]tpad=stop_mode=clone:stop_duration=2[bg];"
-          f"[bg][1:v]overlay=x=W-w-24:y=H-h-36:eof_action=pass:format=auto,subtitles=cap.ass,"
+          f"[bg][1:v]overlay=x=(W-w)/2:y=H-h-30:eof_action=pass:format=auto,subtitles=cap.ass,"
           f"fade=t=out:st={end - 0.45:.2f}:d=0.45[v];[2:a]apad=pad_dur={HOLD},afade=t=out:st={end - 0.3:.2f}:d=0.3[a]")
     r = subprocess.run([FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-i", "bg.mp4", "-i", "char.mov",
                         "-i", "voice.wav", "-filter_complex", vf, "-map", "[v]", "-map", "[a]", "-t", f"{end:.2f}",

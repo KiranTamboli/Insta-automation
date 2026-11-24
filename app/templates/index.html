@@ -85,6 +85,7 @@
   .ghost-reel{border:1px dashed #3a2a44;border-radius:14px;overflow:hidden;background:var(--card)}
   .ghost-reel .ph{aspect-ratio:9/16;background:linear-gradient(110deg,#15171d 30%,#232633 50%,#15171d 70%);background-size:250% 100%;animation:sk 1.6s linear infinite;display:grid;place-items:center;color:var(--muted);font-size:13px;text-align:center;padding:20px}
   .ghost-reel .ph .ring{width:44px;height:44px;border-radius:50%;border:3px solid #2c2f3b;border-top-color:var(--accent);animation:spin 1s linear infinite;margin:0 auto 12px}
+  .ghost-reel.reelo{border-color:#ff3d7f}
   .ghost-reel.wait .ph .ring{animation:none;border-top-color:#2c2f3b}
   @keyframes sk{to{background-position:-150% 0}}
 
@@ -264,6 +265,7 @@ function liveCard(j, doneCount) {
     </div>
     <div class="steps">${STEPS.map((s,i) => `<div class="step ${i<idx?'done':i===idx?'now':''}"><span class="ic">${i<idx?'✓':''}</span>${s.label}</div>`).join('')}</div>
     <div class="bar"><i style="width:${pct}%"></i></div>
+    ${j.side ? `<div class="live-msg"><span class="m">🎙️ Running alongside: ${esc(j.side)}</span></div>` : ''}
     <div class="live-msg"><span class="m">${esc(j.message || 'Starting…')}</span><span class="t">⏱ ${mmss(elapsed)} elapsed · ${eta}</span></div>
     <div class="tip">💡 ${TIPS[tipIdx % TIPS.length]}</div>
   </div>`;
@@ -297,10 +299,13 @@ async function refresh() {
   // skeleton reels for running jobs
   $('#pending').innerHTML = running.map(j => {
     const ready = perJob[j.id] || 0, out = [];
-    for (let i = ready + 1; i <= j.num_clips; i++) {
+    const side = j.side || '';                      // Reelo's explainer, made at the same time
+    const normal = j.num_clips - ready - (side ? 1 : 0);
+    for (let i = ready + 1; i <= ready + normal; i++) {
       const active = j.status === 'editing' && i === ready + 1;
       out.push(`<div class="ghost-reel ${active?'':'wait'}"><div class="ph"><div><div class="ring"></div>Reel ${i}<br>${active ? esc((j.message||'').replace(/^Editing reel \d+ of \d+…\s*/,'')) || 'editing…' : 'waiting…'}</div></div></div>`);
     }
+    if (side) out.push(`<div class="ghost-reel reelo"><div class="ph"><div><div class="ring"></div>🎙️ Reelo's explainer<br>${esc(side)}</div></div></div>`);
     return out.join('');
   }).join('');
   $('#pending').style.display = running.length ? '' : 'none';

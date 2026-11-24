@@ -105,6 +105,10 @@ def jobs():
 
 @app.get("/api/clips")
 def clips():
+    rows = db.q("SELECT id, path FROM clips")
+    for r in rows:                                   # file deleted by hand while the app runs
+        if not r["path"] or not Path(r["path"]).exists():
+            db.x("DELETE FROM clips WHERE id=? AND status != 'rendering'", (r["id"],))
     return db.q("SELECT * FROM clips ORDER BY COALESCE(scheduled_at,'9999'), id DESC LIMIT 200")
 
 
